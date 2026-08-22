@@ -1,0 +1,46 @@
+name: AutoWCAG-CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  accessibility-remediation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install ast-parser dependencies
+        working-directory: ast-parser
+        run: npm install
+
+      - name: Install target-app dependencies
+        working-directory: target-app
+        run: npm install
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install scanner dependencies
+        run: pip install -r scanner/requirements.txt
+
+      - name: Install orchestrator dependencies
+        run: pip install -r orchestrator/requirements.txt
+
+      - name: Install Playwright browsers
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run AutoWCAG-CI orchestrator
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python orchestrator/engine.py

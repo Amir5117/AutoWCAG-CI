@@ -1,0 +1,7 @@
+# engine.py itself only uses the Python standard library (subprocess, json,
+# pathlib) -- no third-party packages needed here.
+#
+# It shares scanner's dependencies (Playwright, axe-core) by invoking
+# scan.py / sandbox.py through scanner/venv's interpreter directly, rather
+# than duplicating a second Playwright + Chromium install. See
+# scanner/requirements.txt for that environment.
