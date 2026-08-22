@@ -1,0 +1,20 @@
+{
+  "name": "ast-parser",
+  "version": "1.0.0",
+  "description": "Reserved for Phase 2: Babel AST-based auto-remediation of the violations identified by `scanner`. Not implemented in Phase 1.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@babel/generator": "^8.0.0",
+    "@babel/parser": "^8.0.4",
+    "@babel/traverse": "^8.0.4",
+    "dotenv": "^17.4.2",
+    "groq-sdk": "^1.5.0"
+  }
+}

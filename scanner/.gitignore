@@ -1,0 +1,4 @@
+venv/
+__pycache__/
+*.pyc
+last_scan_results.json
