@@ -1,0 +1,14 @@
+<form>
+  <!-- Missing associated label -->
+  <div>
+    Username: <input type="text" id="user-name" />
+  </div>
+  
+  <!-- Image used as a button with no alt text or aria-label -->
+  <button onClick="submitData()">
+    <img src="submit-icon.png" />
+  </button>
+
+  <!-- Color contrast issue (if LLM catches it) and missing href -->
+  <a style="color: lightgray; background: white;" onClick="goBack()">Go back</a>
+</form>
