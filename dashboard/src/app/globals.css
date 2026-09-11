@@ -1,0 +1,58 @@
+@import "tailwindcss";
+@theme {
+  /* Neutrals — Zinc backbone */
+  --color-background: var(--color-zinc-50);
+  --color-foreground: var(--color-zinc-900);
+  --color-card: #ffffff;
+  --color-card-foreground: var(--color-zinc-900);
+  --color-muted: var(--color-zinc-100);
+  --color-muted-foreground: var(--color-zinc-500);
+  --color-border: var(--color-zinc-200);
+  --color-border-strong: var(--color-zinc-300);
+  --color-ring: var(--color-zinc-400);
+  --color-accent: var(--color-zinc-100);
+  --color-accent-foreground: var(--color-zinc-900);
+  --color-secondary: var(--color-zinc-100);
+  --color-secondary-foreground: var(--color-zinc-900);
+  --color-popover: #ffffff;
+  --color-popover-foreground: var(--color-zinc-900);
+  --color-input: var(--color-zinc-200);
+
+  /* Primary */
+  --color-primary: var(--color-zinc-900);
+  --color-primary-foreground: #ffffff;
+  --color-primary-hover: var(--color-zinc-800);
+
+  /* Status */
+  --color-success: var(--color-emerald-600);
+  --color-success-foreground: var(--color-emerald-50);
+  --color-warning: var(--color-amber-600);
+  --color-warning-foreground: var(--color-amber-50);
+  --color-danger: var(--color-rose-600);
+  --color-danger-foreground: var(--color-rose-50);
+  --color-destructive: var(--color-danger);
+  --color-destructive-foreground: var(--color-danger-foreground);
+  --color-ai: var(--color-violet-600);
+  --color-ai-foreground: var(--color-violet-50);
+
+  /* Diff */
+  --color-diff-delete-bg: var(--color-rose-50);
+  --color-diff-insert-bg: var(--color-emerald-50);
+  --color-diff-delete-text: var(--color-rose-800);
+  --color-diff-insert-text: var(--color-emerald-800);
+
+  /* Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+
+  /* Fonts */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+html, body {
+  @apply bg-zinc-50 text-zinc-900 antialiased;
+}
+*:focus-visible {
+  @apply outline-none ring-2 ring-zinc-400 ring-offset-2 ring-offset-zinc-50;
+}
