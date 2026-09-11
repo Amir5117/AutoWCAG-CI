@@ -29,6 +29,18 @@ const STRUCTURAL_RULE_IDS = new Set([
 
 // --- Pipeline stages -------------------------------------------------------
 
+// Attribute names axe-core actually reads to compute accessible names/roles
+// and label associations. A dynamic binding on one of these (e.g.
+// `alt={user.name}`, `aria-label={item.label}`) is very often *the LLM's
+// fix itself* -- stripping it the same way as `onChange={...}` would defeat
+// the very patch the sandbox is supposed to validate.
+const ACCESSIBILITY_ATTR_NAMES = new Set(["alt", "title", "id", "htmlFor", "role"]);
+const SANDBOX_MOCK_VALUE = "sandbox-mock-value";
+
+function isAccessibilityAttrName(name: string): boolean {
+  return ACCESSIBILITY_ATTR_NAMES.has(name) || name.startsWith("aria-");
+}
+
 /**
  * The sandbox has no real JSX renderer -- it feeds component source
  * straight into page.setContent() so axe-core can scan the resulting DOM.
@@ -37,11 +49,18 @@ const STRUCTURAL_RULE_IDS = new Set([
  * `onChange={(e) => setEmail(e.target.value)}` breaks after `{(e)` (the
  * space before "=>"), and the stray `=>` and `)` that follow get parsed as
  * garbage attributes/text, corrupting every attribute and often the tag
- * boundary itself -- not just that one prop. axe-core only needs static,
- * semantic markup (id, htmlFor, aria-*, alt, role, ...), so any attribute
- * bound to a `{...}` JS expression -- event handlers, value={x}, src={x},
- * style={{...}}, etc. -- is stripped entirely before the browser ever sees
- * it, rather than trying to evaluate it.
+ * boundary itself -- not just that one prop.
+ *
+ * Any attribute bound to a `{...}` JS expression gets handled one of two
+ * ways before the browser ever sees it:
+ *  - Accessibility/structural props (alt, title, id, htmlFor, role,
+ *    aria-*) are kept, with the `{...}` replaced by a static
+ *    SANDBOX_MOCK_VALUE string -- axe-core needs *some* concrete value
+ *    there to validate the fix (e.g. that `alt` is non-empty), and it
+ *    can't evaluate the real expression without a real render.
+ *  - Everything else (event handlers, value={x}, src={x}, style={{...}},
+ *    ...) is dropped entirely -- axe-core doesn't need it, and there's no
+ *    single mock value that would be meaningful for arbitrary props.
  *
  * Brace-depth tracking (not a flat `[^}]+` regex) so nested braces --
  * arrow-function bodies, `style={{...}}` -- don't truncate the expression
@@ -63,6 +82,7 @@ function stripDynamicJsxBindings(source: string): string {
       nameStart--;
     }
 
+    const attrName = source.slice(nameStart, bindingStart);
     result += source.slice(i, nameStart);
 
     let depth = 0;
@@ -76,6 +96,10 @@ function stripDynamicJsxBindings(source: string): string {
           break;
         }
       }
+    }
+
+    if (isAccessibilityAttrName(attrName)) {
+      result += `${attrName}="${SANDBOX_MOCK_VALUE}"`;
     }
 
     i = j;
