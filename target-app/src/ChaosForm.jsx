@@ -98,3 +98,4 @@ export default function ChaosForm({ onSubmit, user }) {
 // Triggering run with synchronize support
 // Triggering run with a11y prop mocking
 // Final sandbox trigger - let's go!
+// Defeating the pagination trap!

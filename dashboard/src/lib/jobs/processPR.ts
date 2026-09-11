@@ -288,10 +288,14 @@ export async function processPR(payload: any, userId: string) {
 
     const octokit = await getOctokitForRepo(owner, repo);
 
+    // listFiles defaults to 30 files/page -- a PR with more than that
+    // silently drops everything past page 1. 100 is the API's per-page
+    // ceiling; a PR bigger than that still needs real pagination.
     const { data: changedFiles } = await octokit.rest.pulls.listFiles({
       owner,
       repo,
       pull_number: pullNumber,
+      per_page: 100,
     });
 
     const relevantFiles = changedFiles.filter((f) =>
