@@ -89,11 +89,12 @@ export default function DeepTree({ mode = "full", highlightId }) {
                               {item.media ? (
                                 <span className="media-slot">
                                   <img
-                                    src={item.media.src}
-                                    width={24}
-                                    height={24}
-                                    className="inline-badge"
-                                  />
+  src={item.media.src}
+  width={24}
+  height={24}
+  className="inline-badge"
+  alt={item.media.alt || ""}
+/>
                                 </span>
                               ) : null}
                             </div>
