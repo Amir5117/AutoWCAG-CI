@@ -1,0 +1,1 @@
+export default function TestBadge() { return <img src="/badge.png" />; }
