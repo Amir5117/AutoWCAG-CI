@@ -1,0 +1,1 @@
+export default function Demo1() { return <article><img src='/logo.png' /></article>; }
