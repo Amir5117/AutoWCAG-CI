@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
-import { CircleCheck, FlaskConical, Gauge, ShieldCheck } from "lucide-react";
+import { CircleCheck, ShieldCheck } from "lucide-react";
 import type { Patch } from "@/types/patch";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -26,7 +27,13 @@ import {
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Card, CardHeader, CardContent, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardHeader,
+  CardContent,
+  CardDescription,
+} from "@/components/ui/card";
 import {
   ChartContainer,
   ChartTooltip,
@@ -35,7 +42,9 @@ import {
 } from "@/components/ui/chart";
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { PatchDiffViewer } from "@/components/patch-diff-viewer";
+import { PatchStatusBadge } from "@/components/patch-status-badge";
 import { getDashboardStats, type DashboardStats } from "@/lib/actions/stats";
+import { describeRule } from "@/lib/rule-labels";
 
 function getInitials(name?: string | null, email?: string | null) {
   const source = name?.trim() || email?.trim();
@@ -47,15 +56,12 @@ function getInitials(name?: string | null, email?: string | null) {
 
 function buildRoiKpis(stats: DashboardStats) {
   return [
-    { label: "Manual Hours Saved", value: `${stats.hoursSaved}h`, accent: true },
     {
-      label: "AI Acceptance Rate",
+      label: "Fix Acceptance Rate",
       value: `${stats.passRate}%`,
-      accent: false,
-      description: "% of AI-generated patches approved by human reviewers",
+      description: "% of automated fixes approved by human reviewers",
     },
-    { label: "Violations Cleared", value: `${stats.totalCleared}`, accent: false },
-    { label: "Active PRs Monitored", value: `${stats.prsMonitored}`, accent: false },
+    { label: "Code Reviews Monitored", value: `${stats.prsMonitored}` },
   ];
 }
 
@@ -79,6 +85,17 @@ export default function Page() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
 
+  const loadStats = useCallback(() => {
+    getDashboardStats()
+      .then((data) => {
+        setStats(data);
+        setStatsError(null);
+      })
+      .catch(() => {
+        setStatsError("Couldn't load ROI metrics.");
+      });
+  }, []);
+
   useEffect(() => {
     if (sessionStatus !== "authenticated") return;
 
@@ -86,65 +103,58 @@ export default function Page() {
 
     fetch("/api/patches")
       .then((res) => {
-        if (!res.ok) throw new Error("Failed to load patches");
+        if (!res.ok) throw new Error("Failed to load fixes");
         return res.json();
       })
       .then((data: Patch[]) => {
         if (!cancelled) setPatches(data);
       })
       .catch(() => {
-        if (!cancelled) setError("Couldn't load pending patches. Is the dev server running?");
+        if (!cancelled) setError("Couldn't load your fixes. Please refresh the page and try again.");
       });
+
+    loadStats();
 
     return () => {
       cancelled = true;
     };
-  }, [sessionStatus]);
+  }, [sessionStatus, loadStats]);
 
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 3000);
+    const timer = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(timer);
   }, [toast]);
 
-  useEffect(() => {
-    if (!statsOpen) return;
-
-    let cancelled = false;
-
-    getDashboardStats()
-      .then((data) => {
-        if (!cancelled) {
-          setStats(data);
-          setStatsError(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setStatsError("Couldn't load ROI metrics.");
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [statsOpen]);
-
-  const pendingPatches = patches?.filter((p) => p.status === "pending") ?? [];
-  const activePatch =
-    pendingPatches.find((p) => p.id === activeId) ?? pendingPatches[0] ?? null;
+  const sortedPatches = (patches ?? []).slice().sort((a, b) => {
+    if (a.status !== b.status) return a.status === "pending" ? -1 : 1;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+  const pendingCount = sortedPatches.filter((p) => p.status === "pending").length;
+  const activePatch = sortedPatches.find((p) => p.id === activeId) ?? sortedPatches[0] ?? null;
 
   async function handleApprove(id: string) {
+    setActiveId(id);
     setApprovingId(id);
     setError(null);
     try {
-      const res = await fetch(`/api/patches/${id}/approve`, { method: "POST" });
-      if (!res.ok) throw new Error("Failed to approve");
-      const updated: Patch = await res.json();
+      const res = await fetch("/api/github/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patchId: id }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(body?.error ?? "Couldn't apply this fix. Please try again.");
+      }
+      const updated: Patch = body;
       setPatches((prev) =>
         prev ? prev.map((p) => (p.id === updated.id ? updated : p)) : prev
       );
-      setToast(`${updated.file} merged into main`);
-    } catch {
-      setError("Failed to merge that patch. Try again.");
+      setToast("Fix applied to your pull request on GitHub");
+      loadStats();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't apply this fix. Please try again.");
     } finally {
       setApprovingId(null);
     }
@@ -177,7 +187,7 @@ export default function Page() {
 
         <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-lg border border-border bg-card px-10 py-10 text-center shadow-sm">
           <p className="text-sm text-muted-foreground">
-            Sign in to review and approve AI-generated accessibility patches.
+            Sign in to review and approve automated accessibility fixes.
           </p>
           <Button size="lg" className="gap-2" onClick={() => signIn("github")}>
             <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -192,8 +202,7 @@ export default function Page() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      {/* Header */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-6">
+      <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-5">
         <div className="flex items-center gap-3">
           <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary">
             <ShieldCheck className="h-4 w-4 text-primary-foreground" aria-hidden="true" />
@@ -257,7 +266,61 @@ export default function Page() {
         </div>
       </header>
 
-      {/* My Stats */}
+      <section
+        aria-label="Impact summary"
+        className="grid shrink-0 gap-3 border-b border-zinc-200 bg-white px-5 py-4 sm:grid-cols-2"
+      >
+        <Card className="gap-1.5 rounded-lg py-4 shadow-none">
+          <CardHeader className="px-5">
+            <CardDescription className="text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
+              Hours Saved
+            </CardDescription>
+            <CardAction>
+              <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[11px] font-medium text-zinc-600">
+                ≈ 30 min per fix
+              </Badge>
+            </CardAction>
+          </CardHeader>
+          <CardContent className="px-5">
+            {stats === null && !statsError ? (
+              <div className="h-8 w-24 animate-pulse rounded-xs bg-muted" />
+            ) : (
+              <p className="text-3xl leading-none font-semibold tracking-tight text-emerald-600 tabular-nums">
+                {stats ? `${stats.hoursSaved}h` : "—"}
+              </p>
+            )}
+            <p className="mt-2 text-xs text-zinc-500">
+              Time your team no longer spends fixing these issues by hand
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="gap-1.5 rounded-lg py-4 shadow-none">
+          <CardHeader className="px-5">
+            <CardDescription className="text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
+              Violations Cleared
+            </CardDescription>
+            <CardAction>
+              <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[11px] font-medium text-zinc-600">
+                Merged to GitHub
+              </Badge>
+            </CardAction>
+          </CardHeader>
+          <CardContent className="px-5">
+            {stats === null && !statsError ? (
+              <div className="h-8 w-16 animate-pulse rounded-xs bg-muted" />
+            ) : (
+              <p className="text-3xl leading-none font-semibold tracking-tight text-foreground tabular-nums">
+                {stats ? stats.totalCleared : "—"}
+              </p>
+            )}
+            <p className="mt-2 text-xs text-zinc-500">
+              Accessibility issues fixed and added to your code
+            </p>
+          </CardContent>
+        </Card>
+      </section>
+
       <Sheet open={statsOpen} onOpenChange={setStatsOpen}>
         <SheetContent className="overflow-y-auto sm:max-w-xl">
           <SheetHeader>
@@ -273,7 +336,7 @@ export default function Page() {
 
             <div className="grid grid-cols-2 gap-3">
               {stats === null
-                ? Array.from({ length: 4 }, (_, i) => (
+                ? Array.from({ length: 2 }, (_, i) => (
                     <Card key={i} className="gap-1 py-4">
                       <CardHeader className="px-4">
                         <div className="h-3 w-24 animate-pulse rounded-xs bg-muted" />
@@ -294,11 +357,7 @@ export default function Page() {
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="px-4">
-                        <p
-                          className={`text-2xl font-semibold tracking-tight ${
-                            kpi.accent ? "text-emerald-600" : "text-foreground"
-                          }`}
-                        >
+                        <p className="text-2xl font-semibold tracking-tight text-foreground">
                           {kpi.value}
                         </p>
                         {kpi.description && (
@@ -342,7 +401,6 @@ export default function Page() {
         </SheetContent>
       </Sheet>
 
-      {/* Account Settings */}
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent>
           <DialogHeader>
@@ -356,11 +414,10 @@ export default function Page() {
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-0.5">
                 <Label htmlFor="auto-approve-safe-patches">
-                  Auto-Approve Safe Patches
+                  Auto-Approve Safe Fixes
                 </Label>
                 <p className="text-sm text-muted-foreground">
-                  Automatically merge patches that achieve High Confidence and pass the
-                  Playwright sandbox.
+                  Automatically apply fixes that pass automated browser testing.
                 </p>
               </div>
               <Switch id="auto-approve-safe-patches" defaultChecked />
@@ -370,7 +427,7 @@ export default function Page() {
               <div className="space-y-0.5">
                 <Label htmlFor="strict-compliance-mode">Strict Compliance Mode</Label>
                 <p className="text-sm text-muted-foreground">
-                  Block pull requests from merging if critical accessibility violations
+                  Block code changes from merging while critical accessibility issues
                   remain unfixed.
                 </p>
               </div>
@@ -379,10 +436,9 @@ export default function Page() {
 
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-0.5">
-                <Label htmlFor="sandbox-failure-alerts">Sandbox Failure Alerts</Label>
+                <Label htmlFor="sandbox-failure-alerts">Failed Fix Alerts</Label>
                 <p className="text-sm text-muted-foreground">
-                  Send a webhook notification if an AI-generated patch fails validation
-                  on its final retry.
+                  Get notified if an automated fix fails testing on its final attempt.
                 </p>
               </div>
               <Switch id="sandbox-failure-alerts" defaultChecked />
@@ -398,13 +454,12 @@ export default function Page() {
       </Dialog>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
         <aside className="flex w-72 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50">
-          <div className="px-4 py-4 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            Pending Patches — {isLoading ? "…" : pendingPatches.length}
+          <div className="px-4 py-3 text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
+            Awaiting Approval — {isLoading ? "…" : pendingCount}
           </div>
           <Separator />
-          <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
+          <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
             {isLoading &&
               [0, 1, 2].map((i) => (
                 <div key={i} className="flex flex-col gap-1.5 rounded-md px-3 py-2.5 pl-4">
@@ -413,12 +468,14 @@ export default function Page() {
                 </div>
               ))}
 
-            {!isLoading && pendingPatches.length === 0 && (
-              <p className="px-3 py-2 text-sm text-muted-foreground">Nothing pending.</p>
+            {!isLoading && sortedPatches.length === 0 && (
+              <p className="px-3 py-2 text-sm text-muted-foreground">
+                No fixes yet. Open a pull request and we&apos;ll analyze it automatically.
+              </p>
             )}
 
             {!isLoading &&
-              pendingPatches.map((patch) => {
+              sortedPatches.map((patch) => {
                 const isActive = patch.id === activePatch?.id;
                 return (
                   <button
@@ -427,15 +484,18 @@ export default function Page() {
                     onClick={() => setActiveId(patch.id)}
                     className={
                       isActive
-                        ? "group flex flex-col gap-1 px-3 py-2.5 rounded-md border border-zinc-200 bg-zinc-50 border-l-2 border-l-zinc-900 shadow-sm cursor-pointer text-left"
-                        : "group flex flex-col gap-1 px-3 py-2.5 rounded-md border border-transparent hover:bg-zinc-100/80 cursor-pointer transition-colors text-left"
+                        ? "group flex flex-col gap-0.5 px-3 py-2 rounded-md border border-zinc-200 bg-white border-l-2 border-l-zinc-900 shadow-[0_1px_2px_rgba(0,0,0,0.04)] cursor-pointer text-left"
+                        : "group flex flex-col gap-0.5 px-3 py-2 rounded-md border border-transparent hover:bg-zinc-100/80 cursor-pointer transition-colors text-left"
                     }
                   >
-                    <span className="font-mono text-[13px] text-zinc-900 truncate">
-                      {patch.file}
+                    <span className="text-[13px] leading-snug font-medium tracking-tight text-zinc-900">
+                      {describeRule(patch.ruleId)}
                     </span>
-                    <span className="flex items-center gap-1.5 text-xs text-zinc-500">
-                      {patch.ruleId}
+                    <span className="truncate font-mono text-xs text-zinc-500">
+                      {patch.file.split("/").pop()}
+                    </span>
+                    <span className="mt-1 flex items-center gap-1.5">
+                      <PatchStatusBadge status={patch.status} />
                     </span>
                   </button>
                 );
@@ -443,9 +503,8 @@ export default function Page() {
           </nav>
         </aside>
 
-        {/* Detail pane */}
         <main className="flex flex-1 flex-col overflow-y-auto bg-white">
-          <div className="flex-1 px-8 py-6">
+          <div className="mx-auto w-full max-w-5xl flex-1 px-6 py-5">
             {error && (
               <div className="mb-6 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-danger">
                 {error}
@@ -464,72 +523,37 @@ export default function Page() {
               <div className="flex flex-col items-center justify-center rounded-lg bg-muted px-12 py-16 text-center">
                 <p className="text-sm font-medium text-foreground">All caught up</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  No pending patches left to review.
+                  There are no fixes to review right now.
                 </p>
               </div>
             )}
 
             {!isLoading && activePatch && (
               <>
-                {/* Command bar */}
                 <div className="mb-4 flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h1 className="truncate text-2xl font-semibold tracking-tight text-foreground">
-                        {activePatch.file}
-                      </h1>
-                      <span className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium bg-zinc-100 text-zinc-800 border-zinc-200 font-mono">
-                        <FlaskConical className="h-3 w-3" aria-hidden="true" />
-                        {activePatch.ruleId}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      AI-generated patch resolves 1 axe-core violation. Review the diff below
-                      before merging.
+                    <h1 className="text-xl font-semibold tracking-tight text-zinc-950">
+                      {describeRule(activePatch.ruleId)}
+                    </h1>
+                    <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-zinc-500">
+                      {activePatch.status === "merged"
+                        ? "This fix has been applied to your pull request on GitHub."
+                        : "Automated patch resolves 1 axe-core violation. Review the diff below before merging."}
                     </p>
                   </div>
-
-                  <div className="flex shrink-0 items-center gap-3">
-                    <button
-                      type="button"
-                      disabled={approvingId === activePatch.id}
-                      className="inline-flex items-center justify-center rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-zinc-400 transition-colors disabled:opacity-50"
-                    >
-                      Reject
-                    </button>
-                    <button
-                      type="button"
-                      disabled={approvingId === activePatch.id}
-                      onClick={() => handleApprove(activePatch.id)}
-                      className="inline-flex items-center justify-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 focus-visible:ring-2 focus-visible:ring-zinc-400 disabled:opacity-50 transition-colors"
-                    >
-                      {approvingId === activePatch.id ? "Merging…" : "Approve & Merge"}
-                    </button>
+                  <div className="shrink-0">
+                    <PatchStatusBadge status={activePatch.status} />
                   </div>
-                </div>
-
-                {/* Status strip */}
-                <div className="mb-6 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium bg-emerald-50 text-emerald-700 border-emerald-200">
-                    <Gauge className="h-3 w-3" aria-hidden="true" />
-                    Confidence: High
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium bg-zinc-50 text-zinc-700 border-zinc-200">
-                    Risk: Low
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium bg-emerald-50 text-emerald-700 border-emerald-200">
-                    <CircleCheck className="h-3 w-3" aria-hidden="true" />
-                    Sandbox: Passed
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium bg-violet-50 text-violet-700 border-violet-200">
-                    AI-generated
-                  </span>
                 </div>
 
                 <PatchDiffViewer
+                  key={activePatch.id}
                   filename={activePatch.file}
                   originalCode={activePatch.originalCode}
                   patchedCode={activePatch.patchedCode}
+                  status={activePatch.status}
+                  isApproving={approvingId === activePatch.id}
+                  onApprove={() => handleApprove(activePatch.id)}
                 />
               </>
             )}
@@ -537,7 +561,6 @@ export default function Page() {
         </main>
       </div>
 
-      {/* Toast */}
       {toast && (
         <div className="fixed right-6 bottom-6 flex items-center gap-2 rounded-md border border-border bg-card px-4 py-3 text-sm text-foreground shadow-lg">
           <CircleCheck className="h-4 w-4 text-success" aria-hidden="true" />

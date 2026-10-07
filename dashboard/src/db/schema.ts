@@ -6,11 +6,6 @@ import {
   timestamp,
 } from "drizzle-orm/pg-core";
 
-// --- NextAuth (Auth.js) tables -----------------------------------------
-// Shape required by @auth/drizzle-adapter's Postgres schema. Table names
-// ("user", "account", "session", "verificationToken") are load-bearing --
-// the adapter queries these exact names.
-
 export const users = pgTable("user", {
   id: text("id")
     .primaryKey()
@@ -61,8 +56,6 @@ export const verificationTokens = pgTable(
   (table) => [primaryKey({ columns: [table.identifier, table.token] })]
 );
 
-// --- Domain model --------------------------------------------------------
-
 export const patches = pgTable("patches", {
   id: text("id")
     .primaryKey()
@@ -72,8 +65,9 @@ export const patches = pgTable("patches", {
   originalCode: text("originalCode").notNull(),
   patchedCode: text("patchedCode").notNull(),
   status: text("status").notNull().default("pending"),
-  // Nullable for now -- NextAuth isn't wired up yet, so there's no
-  // authenticated user to attribute existing/seeded patches to.
+  repoOwner: text("repoOwner"),
+  repoName: text("repoName"),
+  pullNumber: integer("pullNumber"),
   userId: text("userId").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
