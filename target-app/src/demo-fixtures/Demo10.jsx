@@ -1,1 +1,1 @@
-export default function Demo10() { return <article><img src='/logo.png' /></article>; }
+export default function Demo10() { return <article><img src='/logo.png' alt='Company Logo' /></article>; }
