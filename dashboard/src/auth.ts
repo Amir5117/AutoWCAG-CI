@@ -18,9 +18,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    // With the database session strategy, Auth.js's default session
-    // callback strips everything but name/email/image -- user.id has to be
-    // forwarded explicitly or session.user.id is always undefined.
     session({ session, user }) {
       session.user.id = user.id;
       return session;

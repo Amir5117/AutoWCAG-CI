@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "AutoWCAG-CI Remediation Center",
-  description: "Review and approve AI-generated WCAG accessibility patches.",
+  description: "Review and approve automated WCAG accessibility patches.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

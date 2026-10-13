@@ -30,8 +30,6 @@ async function main() {
     }).`
   );
 
-  // Short-lived script -- exit explicitly rather than trying to tear down
-  // the shared `db` pool, which isn't designed to be closed mid-app-lifetime.
   process.exit(0);
 }
 

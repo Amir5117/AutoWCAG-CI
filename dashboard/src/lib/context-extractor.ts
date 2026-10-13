@@ -4,9 +4,6 @@ import * as t from "@babel/types";
 
 const DEFAULT_LINES_ABOVE = 15;
 const DEFAULT_LINES_BELOW = 20;
-// label/image-alt fixes usually need the parent <form>/wrapper element
-// (to add a <label htmlFor> or check for a nearby caption), which sits
-// further above the offending line than a typical fix needs.
 const WRAPPER_RULE_EXTRA_ABOVE = 15;
 const WRAPPER_RULES = new Set(["label", "image-alt"]);
 const MAX_TOTAL_LINES = 80;
@@ -15,16 +12,6 @@ function escapeRegExp(text: string) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Returns `source` with the contents of //-line and block comments blanked
- * out to spaces (newlines preserved, so line numbers and all character
- * offsets stay identical to the original). Used before any regex-based tag
- * scanning so a tag-shaped string sitting inside a comment -- e.g. a
- * descriptive comment like "// <input> with no label" -- can never be
- * mistaken for a real element. String/template literals are also skipped
- * over (not masked, just not scanned for comment starts) so a URL like
- * "http://example.com" isn't misread as a line comment.
- */
 function maskComments(source: string): string {
   const result = source.split("");
   let i = 0;
@@ -73,14 +60,6 @@ function maskComments(source: string): string {
   return result.join("");
 }
 
-/**
- * Locates the source line that produced `violationNodeHtml`. axe-core
- * reports the *rendered* outerHTML, which routinely differs from the JSX
- * source it came from (self-closing "/>" collapses to ">", attribute
- * order/quoting can shift, etc.), so an exact substring match is tried
- * first but not relied on -- it falls back to progressively shorter
- * prefixes of the opening tag, then just the tag name.
- */
 function findOffendingLineIndex(lines: string[], violationNodeHtml: string): number {
   const needle = violationNodeHtml.trim();
 
@@ -105,18 +84,8 @@ function findOffendingLineIndex(lines: string[], violationNodeHtml: string): num
   return 0;
 }
 
-/**
- * Extracts a window of source lines around the violation so the LLM has
- * enough surrounding structure (parent form, sibling labels, etc.) to
- * produce a correct fix instead of hallucinating one from a single tag.
- * This is READ-ONLY context for the model -- see locateNodeFragment for
- * the actual splice target.
- */
 export function extractContext(fileContent: string, violationNodeHtml: string, ruleId: string): string {
   const lines = fileContent.split("\n");
-  // Search over comment-masked lines so a tag-shaped string inside a
-  // comment can't be mistaken for the real offending line -- but slice the
-  // returned context from the original, unmasked lines below.
   const maskedLines = maskComments(fileContent).split("\n");
   const offendingLine = findOffendingLineIndex(maskedLines, violationNodeHtml);
 
@@ -132,13 +101,6 @@ export function extractContext(fileContent: string, violationNodeHtml: string, r
   return lines.slice(start, end).join("\n");
 }
 
-// --- Precise node location for splicing -------------------------------
-
-/**
- * Given the index of the "<" that starts a tag named `tagName`, finds the
- * index of the ">" that closes *that* opening tag, ignoring any ">" that
- * appears inside a quoted attribute value.
- */
 function findOpenTagEnd(source: string, tagStart: number): number | null {
   let i = tagStart + 1;
   let quote: '"' | "'" | null = null;
@@ -158,10 +120,6 @@ function findOpenTagEnd(source: string, tagStart: number): number | null {
   return null;
 }
 
-// HTML void elements never have children or a closing tag, and axe/plain
-// HTML routinely serializes them without a trailing "/" (e.g. "<img>", not
-// "<img />"). JSX source always writes these with an explicit "/>", so this
-// only matters for the line-window/.html fallback path.
 const VOID_ELEMENTS = new Set([
   "area",
   "base",
@@ -178,13 +136,6 @@ const VOID_ELEMENTS = new Set([
   "wbr",
 ]);
 
-/**
- * Given the index of the "<" that starts a tag named `tagName`, returns the
- * [start, end) span of the whole element -- through its self-closing "/>"
- * (or, for HTML void elements, its own bare ">") or its matching
- * "</tagName>", tracking nesting depth for elements that legitimately
- * nest inside themselves (e.g. nested <div>s).
- */
 function findTagSpan(source: string, tagStart: number, tagName: string): { start: number; end: number } | null {
   const openEnd = findOpenTagEnd(source, tagStart);
   if (openEnd === null) return null;
@@ -205,7 +156,7 @@ function findTagSpan(source: string, tagStart: number, tagName: string): { start
     const openMatch = openPattern.exec(source);
     const closeMatch = closePattern.exec(source);
 
-    if (!closeMatch) return null; // unterminated -- bail rather than guess
+    if (!closeMatch) return null;
 
     if (openMatch && openMatch.index < closeMatch.index) {
       const innerOpenEnd = findOpenTagEnd(source, openMatch.index);
@@ -255,53 +206,19 @@ export interface NodeFragmentMatch {
   end: number;
 }
 
-/**
- * Locates the exact source fragment in `fileContent` corresponding to
- * `violationNodeHtml`, so only that single node can be replaced -- never
- * the surrounding context. axe-core's serialized HTML frequently doesn't
- * match the JSX source verbatim (">" vs "/>", attribute order/spacing,
- * quote style), so this tries progressively looser strategies:
- *   1. Exact substring match of the reported HTML.
- *   2. Whitespace/self-closing-normalized match against every element in
- *      the file with the same tag name.
- *   3. Best-effort match by opening-tag attribute overlap (most matching
- *      name="value" pairs wins).
- *   4. If the tag name is unambiguous -- exactly one element with that tag
- *      name exists in the file -- use it. This matters because axe-core's
- *      reported `node.html` can be a bare tag with no attributes at all
- *      (confirmed live: axe reported literally "<img>" for an
- *      <img src="..." width="..." height="..." /> element), which gives
- *      strategies 2 and 3 nothing to work with even though there's no
- *      real ambiguity to resolve.
- * Returns null if no strategy finds a confident match -- callers must
- * treat that as a hard failure, not a reason to guess. Notably, this
- * stays null (correctly) when the tag name is ambiguous (e.g. two
- * <input> elements) and the needle carries no distinguishing attributes.
- */
 export function locateNodeFragment(fileContent: string, violationNodeHtml: string): NodeFragmentMatch | null {
   const needle = violationNodeHtml.trim();
   const tagName = needle.match(/^<([a-zA-Z][a-zA-Z0-9]*)/)?.[1];
   if (!tagName) return null;
 
-  // All scanning happens against a comment-masked view of the source, so a
-  // tag-shaped string sitting inside a comment (e.g. a descriptive comment
-  // that happens to say "<input>") can never be matched as if it were a
-  // real element -- confirmed live: a bare axe "<input>" needle matched a
-  // "// <input> with no label" comment before this masking was added,
-  // because it was a perfect normalized match and nothing distinguished it
-  // from the real elements. Positions are 1:1 with the original (masking
-  // only blanks comment interiors to spaces, same length), so the actual
-  // returned text is always sliced from the original, unmasked source.
   const masked = maskComments(fileContent);
 
-  // Strategy 1: exact substring match.
   const exactIdx = masked.indexOf(needle);
   if (exactIdx !== -1) {
     const span = findTagSpan(masked, exactIdx, tagName);
     if (span) return { text: fileContent.slice(span.start, span.end), ...span };
   }
 
-  // Strategies 2-4: walk every element with a matching tag name.
   const normalizedNeedle = normalizeFragment(needle);
   const needleAttrs = extractAttributes(needle);
 
@@ -318,7 +235,6 @@ export function locateNodeFragment(fileContent: string, violationNodeHtml: strin
 
     const candidateText = fileContent.slice(span.start, span.end);
 
-    // Strategy 2: normalized exact match.
     if (normalizeFragment(candidateText) === normalizedNeedle) {
       return { text: candidateText, ...span };
     }
@@ -329,32 +245,17 @@ export function locateNodeFragment(fileContent: string, violationNodeHtml: strin
     openPattern.lastIndex = span.end;
   }
 
-  // Strategy 3: best attribute-overlap match, if any candidate has one.
   const scored = candidates.filter((c) => c.score > 0).sort((a, b) => b.score - a.score);
   if (scored.length > 0) {
     return { text: scored[0].text, start: scored[0].start, end: scored[0].end };
   }
 
-  // Strategy 4: unambiguous by tag name alone.
   if (candidates.length === 1) {
     return { text: candidates[0].text, start: candidates[0].start, end: candidates[0].end };
   }
 
   return null;
 }
-
-// --- AST-based extraction (.jsx / .tsx) --------------------------------
-//
-// The line-window + regex-scanned approach above works, but a window is
-// cut at arbitrary line boundaries that don't align with JSX structure,
-// and locateNodeFragment's tag-matching is a hand-rolled approximation of
-// what a real parser already knows for free. Parsing with @babel/parser
-// and matching against actual JSXElement nodes means:
-//   - the extracted "context" boundary is always a syntactically complete
-//     subtree (a real AST node's source span, never a mid-node cut), and
-//   - the splice target is an exact AST node span, so reconstruction can
-//     never produce "Adjacent JSX elements must be wrapped" errors from
-//     a boundary slicing through the middle of an element.
 
 const AST_PARSE_PLUGINS = ["jsx", "typescript"] as const;
 
@@ -381,14 +282,6 @@ function countLines(text: string): number {
   return text.split("\n").length;
 }
 
-/**
- * Among all JSXElements in the AST with a tag name matching the violation,
- * picks the one that actually corresponds to it, using the same tiered
- * strategy as locateNodeFragment (exact match, normalized match, attribute
- * overlap, then "unambiguous by tag name alone" as a last resort) --
- * except operating on real AST node boundaries instead of regex-scanned
- * ones.
- */
 function pickBestJsxMatch(
   fileContent: string,
   jsxElements: NodePath<t.JSXElement>[],
@@ -431,14 +324,6 @@ function pickBestJsxMatch(
   return null;
 }
 
-/**
- * Walks up from the matched JSX element to the nearest meaningful,
- * syntactically complete boundary: the closest enclosing <form> or
- * semantic container (section/header/nav/main/footer/article/aside) that
- * still fits under maxLines, falling back to the largest complete JSX
- * ancestor that fits, and finally the target element itself if nothing
- * else qualifies. Never returns a boundary that cuts across a node.
- */
 function findBoundary(
   targetPath: NodePath<t.JSXElement>,
   maxLines: number,
@@ -551,15 +436,6 @@ function extractViaLineWindow(
   };
 }
 
-/**
- * Primary extraction entry point. Prefers real AST-based extraction for
- * .jsx/.tsx files (see extractViaAst) so the extracted context is always a
- * syntactically complete subtree and the splice target is an exact node
- * span. Falls back to the line-window extractor (extractContext +
- * locateNodeFragment) for .html files or if JSX parsing/matching fails.
- * Throws if neither strategy can confidently locate the violation --
- * callers must not silently guess a splice target.
- */
 export function extractComponentContext(params: {
   filePath: string;
   fileContent: string;

@@ -12,23 +12,11 @@ export interface DashboardStats {
   chartData: { day: string; fixes: number }[];
 }
 
-// The dashboard's approve flow (src/app/api/patches/[id]/approve/route.ts)
-// targets a single hardcoded demo PR -- `patches` has no PR-number column
-// to count against, so this reflects that fixed scope rather than a query.
 const PRS_MONITORED = 1;
 
 const HOURS_SAVED_PER_PATCH = 0.5;
 const CHART_DAYS = 7;
 
-/**
- * Every row in `patches` already passed its Playwright/axe-core sandbox
- * check -- processFile() only inserts patches that validated, and discards
- * the rest without persisting them (see src/lib/jobs/processPR.ts). So
- * "passed validation" can't be distinguished from "exists" using this
- * table; passRate below reports the merge rate (merged vs. total
- * generated) instead, since that's the only pass/fail-shaped signal the
- * schema actually stores.
- */
 export async function getDashboardStats(): Promise<DashboardStats> {
   const [{ total, merged }] = await db
     .select({
@@ -47,9 +35,6 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   rangeStart.setHours(0, 0, 0, 0);
   rangeStart.setDate(rangeStart.getDate() - (CHART_DAYS - 1));
 
-  // createdAt is set when a patch is generated, not when it's merged --
-  // there's no separate mergedAt column, so "cleared per day" is bucketed
-  // by generation day rather than merge day.
   const dailyRows = await db
     .select({
       day: sql<string>`to_char(${patches.createdAt}, 'YYYY-MM-DD')`,
